@@ -1,0 +1,20 @@
+{
+  "name": "aria",
+  "version-string": "0.1.0",
+  "builtin-baseline": "817892b0ecbc6af994dd6df999c73faf795adbf2",
+  "default-features": [],
+  "features": {
+    "io-json": {
+      "description": "JSON and JSONL readers",
+      "dependencies": ["nlohmann-json"]
+    },
+    "io-csv": {
+      "description": "Numerical CSV reader",
+      "dependencies": ["vincentlaucsb-csv-parser"]
+    },
+    "io-image": {
+      "description": "PNG and JPEG reader",
+      "dependencies": ["stb"]
+    }
+  }
+}

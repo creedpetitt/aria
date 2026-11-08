@@ -1,0 +1,66 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_TESTING": "ON",
+        "ARIA_BUILD_IO": "OFF"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}
+    },
+    {
+      "name": "io-release",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/io-release",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/Vcpkg.cmake",
+        "VCPKG_MANIFEST_INSTALL": "ON",
+        "ARIA_BUILD_IO": "ON",
+        "ARIA_IO_JSON": "ON",
+        "ARIA_IO_CSV": "ON",
+        "ARIA_IO_IMAGE": "ON"
+      }
+    },
+    {
+      "name": "io-debug",
+      "inherits": "io-release",
+      "binaryDir": "${sourceDir}/build/io-debug",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}
+    },
+    {
+      "name": "io-text",
+      "inherits": "release",
+      "binaryDir": "${sourceDir}/build/io-text",
+      "cacheVariables": {
+        "ARIA_BUILD_IO": "ON",
+        "ARIA_IO_JSON": "OFF",
+        "ARIA_IO_CSV": "OFF",
+        "ARIA_IO_IMAGE": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "release", "configurePreset": "release", "jobs": 2},
+    {"name": "debug", "configurePreset": "debug", "jobs": 2},
+    {"name": "io-release", "configurePreset": "io-release", "jobs": 2},
+    {"name": "io-debug", "configurePreset": "io-debug", "jobs": 2},
+    {"name": "io-text", "configurePreset": "io-text", "jobs": 2}
+  ],
+  "testPresets": [
+    {"name": "release", "configurePreset": "release", "output": {"outputOnFailure": true}},
+    {"name": "debug", "configurePreset": "debug", "output": {"outputOnFailure": true}},
+    {"name": "io-release", "configurePreset": "io-release", "output": {"outputOnFailure": true}},
+    {"name": "io-debug", "configurePreset": "io-debug", "output": {"outputOnFailure": true}},
+    {"name": "io-text", "configurePreset": "io-text", "output": {"outputOnFailure": true}}
+  ]
+}
