@@ -33,6 +33,13 @@ public:
       : data(std::move(values)), grad(data.rows(), data.cols(), 0.0f),
         op(operation), prev(std::move(children)), backward_op([] {}) {}
 
+  // backward callbacks retain this node's address. copy or move TensorPtr instead
+  Tensor(const Tensor &) = delete;
+  Tensor &operator=(const Tensor &) = delete;
+  Tensor(Tensor &&) = delete;
+  Tensor &operator=(Tensor &&) = delete;
+  ~Tensor() = default;
+
   static TensorPtr create(aria::Matrix values,
                           const std::string &operation = "") {
     return std::make_shared<Tensor>(std::move(values), operation);
@@ -44,8 +51,6 @@ public:
                                     operation);
   }
 
-  // An all-ones seed differentiates the sum of this tensor's output entries.
-  // Build a fresh forward graph for each training pass.
   void backward() {
     std::vector<TensorPtr> topo;
     std::unordered_set<Tensor *> visited;
@@ -71,9 +76,7 @@ public:
 };
 
 inline TensorPtr matmul(const TensorPtr &a, const TensorPtr &b) {
-  Matrix out_data(a->data.rows(), b->data.cols());
-  matmul(out_data, a->data, b->data);
-  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, "matmul");
+  TensorPtr out = Tensor::create(matmul(a->data, b->data), {a, b}, "matmul");
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
@@ -89,13 +92,33 @@ inline TensorPtr operator+(const TensorPtr &a, const TensorPtr &b) {
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    a->grad = a->grad + out_raw->grad;
-    b->grad = b->grad + out_raw->grad;
+    const Matrix &g = out_raw->grad;
+
+    for (size_t row{}; row < g.rows(); ++row) {
+      for (size_t col{}; col < g.cols(); ++col) {
+        auto a_row = row;
+        auto a_col = col;
+        auto b_row = row;
+        auto b_col = col;
+
+        if (a->data.rows() == 1)
+          a_row = 0;
+        if (a->data.cols() == 1)
+          a_col = 0;
+        if (b->data.rows() == 1)
+          b_row = 0;
+        if (b->data.cols() == 1)
+          b_col = 0;
+
+        a->grad[a_row, a_col] = a->grad[a_row, a_col] + g[row, col];
+        b->grad[b_row, b_col] = b->grad[b_row, b_col] + g[row, col];
+      }
+    }
   };
   return out;
 }
 
-// Elementwise multiplication, distinct from matrix multiplication.
+// elemwise multiplication, not matmul
 inline TensorPtr operator*(const TensorPtr &a, const TensorPtr &b) {
   Matrix out_data = a->data * b->data;
   TensorPtr out = Tensor::create(std::move(out_data), {a, b}, "*");
