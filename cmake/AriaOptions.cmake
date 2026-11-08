@@ -1,0 +1,15 @@
+option(ARIA_BUILD_IO "Build optional data readers" OFF)
+option(ARIA_IO_JSON "Enable JSON and JSONL readers" ON)
+option(ARIA_IO_CSV "Enable the CSV reader" ON)
+option(ARIA_IO_IMAGE "Enable PNG and JPEG readers" ON)
+
+# vcpkg reads this during project(), before dependencies can be found.
+set(VCPKG_MANIFEST_FEATURES "")
+if(ARIA_BUILD_IO)
+  foreach(format IN ITEMS JSON CSV IMAGE)
+    if(ARIA_IO_${format})
+      string(TOLOWER "${format}" feature)
+      list(APPEND VCPKG_MANIFEST_FEATURES "io-${feature}")
+    endif()
+  endforeach()
+endif()
