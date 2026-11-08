@@ -21,9 +21,9 @@ public:
         bias_(Tensor::create(Matrix(1, output_count))) {}
 
   TensorPtr forward(const TensorPtr &input) const override {
-    if (input->data.rows() != 1 || input->data.cols() != input_count_) {
+    if (input->data.cols() != input_count_) {
       throw std::invalid_argument(
-          "Linear currently expects one row with input_count columns");
+          "Linear input must have input_count columns");
     }
     TensorPtr weighted_in = matmul(input, weight_);
     TensorPtr output = weighted_in + bias_;

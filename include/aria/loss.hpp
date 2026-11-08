@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace aria {
 
@@ -14,31 +15,45 @@ inline TensorPtr squared_error(const TensorPtr &prediction, float target) {
 }
 
 inline TensorPtr combined_cross_entropy(const TensorPtr &logits,
-                                        std::size_t target_class) {
-  if (!logits || logits->data.rows() != 1 ||
-      target_class >= logits->data.cols()) {
+                                        std::vector<std::size_t> target_classes) {
+  if (!logits || logits->data.rows() == 0 || logits->data.cols() == 0 ||
+      logits->data.rows() != target_classes.size()) {
     throw std::invalid_argument(
-        "Cross entropy requires one row of scores and a valid target class");
+        "Cross entropy requires nonempty scores and one target per row");
+  }
+  for (const auto target : target_classes) {
+    if (target >= logits->data.cols()) {
+      throw std::invalid_argument("Cross entropy target class is out of range");
+    }
   }
 
-  Matrix probabilities(1, logits->data.cols());
-  const auto stats = detail::softmax_row(probabilities, logits->data, 0);
-  const float loss_value =
-      stats.log_exp_sum -
-      (logits->data.access_elem(0, target_class) - stats.maximum);
+  const size_t rows = logits->data.rows();
+  const size_t cols = logits->data.cols();
 
-  auto out =
-      Tensor::create(Matrix(1, 1, loss_value), {logits}, "cross_entropy");
+  Matrix probabilities(rows, cols);
+  float loss{};
+
+  for (size_t row{}; row < rows; row++) {
+    const auto stats = detail::softmax_row(probabilities, logits->data, row);
+    const auto target = target_classes[row];
+    loss += stats.log_exp_sum - (logits->data[row, target] - stats.maximum);
+  }
+
+  loss = loss / static_cast<float>(rows);
+
+  auto out = Tensor::create(Matrix(1, 1, loss), {logits}, "cross_entropy");
   Tensor *out_raw = out.get();
-  out->backward_op = [logits, target_class,
+  out->backward_op = [logits, target_classes = std::move(target_classes),
                       probabilities = std::move(probabilities), out_raw] {
-    for (std::size_t col = 0; col < probabilities.cols(); ++col) {
-      float derivative = probabilities.access_elem(0, col);
-      if (col == target_class) {
-        derivative -= 1.0f;
+    for (size_t row{}; row < logits->data.rows(); row++) {
+      for (std::size_t col = 0; col < probabilities.cols(); ++col) {
+        float derivative = probabilities[row, col];
+        if (col == target_classes[row]) {
+          derivative -= 1.0f;
+        }
+        logits->grad[row, col] += derivative * out_raw->grad[0, 0] /
+                                  static_cast<float>(probabilities.rows());
       }
-      logits->grad.access_elem(0, col) +=
-          derivative * out_raw->grad.access_elem(0, 0);
     }
   };
   return out;

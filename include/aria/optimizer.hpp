@@ -9,7 +9,7 @@
 
 namespace aria {
 
-// Plain gradient descent. This object keeps handles to the model's parameters.
+// plain gradient descent optimizer
 class Optimizer {
 public:
   Optimizer(std::vector<TensorPtr> parameters, float learning_rate)
