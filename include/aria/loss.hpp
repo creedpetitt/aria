@@ -9,9 +9,44 @@
 
 namespace aria {
 
-inline TensorPtr squared_error(const TensorPtr &prediction, float target) {
-  auto error = prediction + Tensor::create(Matrix(1, 1, -target));
-  return error * error;
+inline TensorPtr mean_squared_error(const TensorPtr &prediction,
+                                    const Matrix &targets) {
+  if (!prediction || prediction->data.rows() == 0 ||
+      prediction->data.cols() == 0) {
+    throw std::invalid_argument("MSE requires nonempty predictions");
+  }
+  detail::require_shape(targets, prediction->data.rows(),
+                        prediction->data.cols());
+
+  Matrix error = prediction->data - targets;
+  float total = 0.0f;
+  for (std::size_t row = 0; row < error.rows(); ++row) {
+    for (std::size_t col = 0; col < error.cols(); ++col) {
+      const float e = error[row, col];
+      total += e * e;
+    }
+  }
+
+  const float count = static_cast<float>(error.rows() * error.cols());
+  auto out = Tensor::create(Matrix(1, 1, total / count),
+                            {prediction}, "mse");
+  Tensor *out_raw = out.get();
+
+  out->backward_op =
+      [prediction, error = std::move(error), out_raw, count] {
+        detail::require_shape(prediction->grad,
+                              error.rows(), error.cols());
+        detail::require_shape(out_raw->grad, 1, 1);
+        const float factor = 2.0f * out_raw->grad[0, 0] / count;
+
+        for (std::size_t row = 0; row < error.rows(); ++row) {
+          for (std::size_t col = 0; col < error.cols(); ++col) {
+            prediction->grad[row, col] += factor * error[row, col];
+          }
+        }
+      };
+
+  return out;
 }
 
 inline TensorPtr combined_cross_entropy(const TensorPtr &logits,
