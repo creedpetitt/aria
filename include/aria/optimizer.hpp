@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -22,6 +23,12 @@ public:
         throw std::invalid_argument("Optimizer parameters must not be null");
       }
     }
+
+    std::unordered_set<Tensor *> seen;
+    seen.reserve(parameters_.size());
+    std::erase_if(parameters_, [&](const TensorPtr &parameter) {
+      return !seen.insert(parameter.get()).second;
+    });
   }
 
   void zero_grad() {
@@ -32,7 +39,7 @@ public:
 
   void step() {
     for (const auto &parameter : parameters_) {
-      parameter->data = parameter->data + parameter->grad * (-learning_rate_);
+      parameter->data += parameter->grad * (-learning_rate_);
     }
   }
 

@@ -80,40 +80,26 @@ public:
     data_.swap(other.data_);
   }
 
-  float &access_elem(std::size_t row, std::size_t col) {
+  // Checked access for individual elements; numerical loops use data().
+  float &operator[](std::size_t row, std::size_t col) {
     if (row >= rows_ || col >= cols_) {
       throw std::out_of_range("Matrix row or column out of range");
     }
     return data_[row * cols_ + col];
-  };
+  }
 
-  const float &access_elem(std::size_t row, std::size_t col) const {
+  const float &operator[](std::size_t row, std::size_t col) const {
     if (row >= rows_ || col >= cols_) {
       throw std::out_of_range("Matrix row or column out of range");
     }
-    return data_.at(row * cols_ + col);
-  }
-
-  float &operator[](std::size_t row, std::size_t col) {
-    return access_elem(row, col);
-  }
-  const float &operator[](std::size_t row, std::size_t col) const {
-    return access_elem(row, col);
-  }
-
-  bool is_zero() const {
-    for (float value : data_) {
-      if (value != 0.0f) {
-        return false;
-      }
-    }
-    return true;
+    return data_[row * cols_ + col];
   }
 
   void fill(float value) { std::fill(data_.begin(), data_.end(), value); }
 
   std::size_t rows() const noexcept { return rows_; }
   std::size_t cols() const noexcept { return cols_; }
+  // Unchecked contiguous storage for numerical loops with validated shapes.
   float *data() noexcept { return data_.data(); }
   const float *data() const noexcept { return data_.data(); }
 
@@ -152,27 +138,90 @@ private:
 
 namespace detail {
 
+struct MatrixShape {
+  std::size_t rows;
+  std::size_t cols;
+};
+
+inline MatrixShape broadcast_shape(const Matrix &a, const Matrix &b) {
+  const bool rows_ok = a.rows() == b.rows() || a.rows() == 1 || b.rows() == 1;
+  const bool cols_ok = a.cols() == b.cols() || a.cols() == 1 || b.cols() == 1;
+  if (!rows_ok || !cols_ok) {
+    throw std::invalid_argument("Incompatible matrix shapes for broadcasting");
+  }
+  return {a.rows() == 1 ? b.rows() : a.rows(),
+          a.cols() == 1 ? b.cols() : a.cols()};
+}
+
+inline void require_shape(const Matrix &value, std::size_t rows,
+                          std::size_t cols) {
+  if (value.rows() != rows || value.cols() != cols) {
+    throw std::invalid_argument(
+        "Matrix shape must match the required dimensions");
+  }
+}
+
+template <typename Operation>
+inline void broadcast_elementwise(Matrix &out, const Matrix &a, const Matrix &b,
+                                  Operation operation) {
+  const auto shape = broadcast_shape(a, b);
+  require_shape(out, shape.rows, shape.cols);
+  if (shape.rows == 0 || shape.cols == 0) {
+    return;
+  }
+  float *const out_data = out.data();
+  const float *const a_data = a.data();
+  const float *const b_data = b.data();
+
+  if (a.rows() == b.rows() && a.cols() == b.cols()) {
+    const std::size_t count = shape.rows * shape.cols;
+    for (std::size_t i = 0; i < count; ++i) {
+      out_data[i] = operation(a_data[i], b_data[i]);
+    }
+    return;
+  }
+
+  const std::size_t a_row_stride = a.rows() == 1 ? 0 : a.cols();
+  const std::size_t b_row_stride = b.rows() == 1 ? 0 : b.cols();
+  const std::size_t a_col_stride = a.cols() == 1 ? 0 : 1;
+  const std::size_t b_col_stride = b.cols() == 1 ? 0 : 1;
+  for (std::size_t row = 0; row < shape.rows; ++row) {
+    const std::size_t out_offset = row * shape.cols;
+    const std::size_t a_offset = row * a_row_stride;
+    const std::size_t b_offset = row * b_row_stride;
+    for (std::size_t col = 0; col < shape.cols; ++col) {
+      const float a_value = a_data[a_offset + col * a_col_stride];
+      const float b_value = b_data[b_offset + col * b_col_stride];
+      out_data[out_offset + col] = operation(a_value, b_value);
+    }
+  }
+}
+
 struct SoftmaxRowStats {
   float maximum;
   float log_exp_sum;
 };
 
+// Callers validate matching shapes, nonempty columns, and the row range.
 inline SoftmaxRowStats softmax_row(Matrix &out, const Matrix &in,
-                                   std::size_t row) {
-  float maximum = in.access_elem(row, 0);
-  for (std::size_t col = 1; col < in.cols(); ++col) {
-    maximum = std::max(maximum, in.access_elem(row, col));
+                                  std::size_t row) {
+  const std::size_t cols = in.cols();
+  const float *const in_row = in.data() + row * cols;
+  float *const out_row = out.data() + row * cols;
+  float maximum = in_row[0];
+  for (std::size_t col = 1; col < cols; ++col) {
+    maximum = std::max(maximum, in_row[col]);
   }
 
   float exp_sum = 0.0f;
-  for (std::size_t col = 0; col < in.cols(); ++col) {
-    float value = std::exp(in.access_elem(row, col) - maximum);
-    out.access_elem(row, col) = value;
+  for (std::size_t col = 0; col < cols; ++col) {
+    const float value = std::exp(in_row[col] - maximum);
+    out_row[col] = value;
     exp_sum += value;
   }
 
-  for (std::size_t col = 0; col < in.cols(); ++col) {
-    out.access_elem(row, col) /= exp_sum;
+  for (std::size_t col = 0; col < cols; ++col) {
+    out_row[col] /= exp_sum;
   }
 
   return {maximum, std::log(exp_sum)};
@@ -180,81 +229,134 @@ inline SoftmaxRowStats softmax_row(Matrix &out, const Matrix &in,
 
 } // namespace detail
 
-inline Matrix softmax(const Matrix &in) {
-  Matrix out(in.rows(), in.cols());
-  if (in.cols() == 0) {
-    return out;
+// Overwrites a pre-sized output; the input and output may be the same matrix.
+inline void softmax(Matrix &out, const Matrix &in) {
+  const std::size_t rows = in.rows();
+  const std::size_t cols = in.cols();
+  detail::require_shape(out, rows, cols);
+  if (cols == 0) {
+    return;
   }
-  for (std::size_t row = 0; row < in.rows(); ++row) {
+  for (std::size_t row = 0; row < rows; ++row) {
     detail::softmax_row(out, in, row);
   }
+}
+
+inline Matrix softmax(const Matrix &in) {
+  Matrix out(in.rows(), in.cols());
+  softmax(out, in);
   return out;
+}
+
+// Pre-sized outputs are overwritten without allocation. The output may be an
+// input when that input already has the complete result shape.
+inline void add(Matrix &out, const Matrix &a, const Matrix &b) {
+  detail::broadcast_elementwise(out, a, b,
+                                [](float x, float y) { return x + y; });
+}
+
+inline void subtract(Matrix &out, const Matrix &a, const Matrix &b) {
+  detail::broadcast_elementwise(out, a, b,
+                                [](float x, float y) { return x - y; });
+}
+
+inline void multiply(Matrix &out, const Matrix &a, const Matrix &b) {
+  detail::require_shape(b, a.rows(), a.cols());
+  detail::require_shape(out, a.rows(), a.cols());
+  float *const out_data = out.data();
+  const float *const a_data = a.data();
+  const float *const b_data = b.data();
+  const std::size_t count = a.rows() * a.cols();
+  for (std::size_t i = 0; i < count; ++i) {
+    out_data[i] = a_data[i] * b_data[i];
+  }
+}
+
+inline void scale(Matrix &out, const Matrix &a, float scalar) {
+  detail::require_shape(out, a.rows(), a.cols());
+  float *const out_data = out.data();
+  const float *const a_data = a.data();
+  const std::size_t count = a.rows() * a.cols();
+  for (std::size_t i = 0; i < count; ++i) {
+    out_data[i] = a_data[i] * scalar;
+  }
 }
 
 inline Matrix operator*(const Matrix &a, const Matrix &b) {
-  if (a.rows() != b.rows() || a.cols() != b.cols()) {
-    throw std::invalid_argument(
-        "Matrices must be same size to perform element multiplication");
-  }
+  detail::require_shape(b, a.rows(), a.cols());
   Matrix out(a.rows(), a.cols());
-  for (std::size_t i = 0; i < a.rows() * a.cols(); ++i) {
-    out.data()[i] = a.data()[i] * b.data()[i];
-  }
+  multiply(out, a, b);
   return out;
 }
 
-inline Matrix operator*(const Matrix &a, const float scalar) {
+inline Matrix operator*(const Matrix &a, float scalar) {
   Matrix out(a.rows(), a.cols());
-  for (std::size_t i = 0; i < a.rows() * a.cols(); ++i) {
-    out.data()[i] = a.data()[i] * scalar;
-  }
+  scale(out, a, scalar);
   return out;
 }
 
 inline Matrix operator+(const Matrix &a, const Matrix &b) {
-  bool rows_ok = a.rows() == b.rows() || a.rows() == 1 || b.rows() == 1;
-  bool cols_ok = a.cols() == b.cols() || a.cols() == 1 || b.cols() == 1;
-  if (!rows_ok || !cols_ok) {
-    throw std::invalid_argument("Incompatable shapes");
-  }
-
-  auto rows = a.rows();
-  auto cols = a.cols();
-
-  if (rows == 1) {
-    rows = b.rows();
-  }
-  if (cols == 1) {
-    cols = b.cols();
-  }
-
-  Matrix out(rows, cols);
-  for (std::size_t row{}; row < rows; ++row) {
-    for (std::size_t col{}; col < cols; ++col) {
-      auto a_row = row;
-      auto a_col = col;
-      auto b_row = row;
-      auto b_col = col;
-
-      if (a.rows() == 1)
-        a_row = 0;
-      if (a.cols() == 1)
-        a_col = 0;
-
-      if (b.rows() == 1)
-        b_row = 0;
-      if (b.cols() == 1)
-        b_col = 0;
-
-      out.data()[row * cols + col] = a.data()[a_row * a.cols() + a_col] +
-                                     b.data()[b_row * b.cols() + b_col];
-    }
-  }
+  const auto shape = detail::broadcast_shape(a, b);
+  Matrix out(shape.rows, shape.cols);
+  add(out, a, b);
   return out;
 }
 
 inline Matrix operator-(const Matrix &a, const Matrix &b) {
-  return a + (b * -1.0f);
+  const auto shape = detail::broadcast_shape(a, b);
+  Matrix out(shape.rows, shape.cols);
+  subtract(out, a, b);
+  return out;
+}
+
+inline Matrix &operator+=(Matrix &a, const Matrix &b) {
+  add(a, a, b);
+  return a;
+}
+
+inline Matrix &operator-=(Matrix &a, const Matrix &b) {
+  subtract(a, a, b);
+  return a;
+}
+
+inline Matrix &operator*=(Matrix &a, const Matrix &b) {
+  multiply(a, a, b);
+  return a;
+}
+
+inline Matrix &operator*=(Matrix &a, float scalar) {
+  scale(a, a, scalar);
+  return a;
+}
+
+// Overwrites a pre-sized output separate from both inputs without allocation.
+inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
+  if (a.cols() != b.rows()) {
+    throw std::invalid_argument("Matrix A cols must equal Matrix B rows");
+  }
+  const std::size_t rows = a.rows();
+  const std::size_t inner = a.cols();
+  const std::size_t cols = b.cols();
+  detail::require_shape(out, rows, cols);
+  if (&out == &a || &out == &b) {
+    throw std::invalid_argument("Matmul output must be separate from its inputs");
+  }
+  out.fill(0.0f);
+  if (rows == 0 || cols == 0 || inner == 0) {
+    return;
+  }
+
+  float *const out_data = out.data();
+  const float *const a_data = a.data();
+  const float *const b_data = b.data();
+  for (std::size_t i = 0; i < rows; ++i) {
+    for (std::size_t k = 0; k < inner; ++k) {
+      const float a_val = a_data[i * inner + k];
+      for (std::size_t j = 0; j < cols; ++j) {
+        out_data[i * cols + j] += a_val * b_data[k * cols + j];
+      }
+    }
+  }
 }
 
 inline Matrix matmul(const Matrix &a, const Matrix &b) {
@@ -262,24 +364,33 @@ inline Matrix matmul(const Matrix &a, const Matrix &b) {
     throw std::invalid_argument("Matrix A cols must equal Matrix B rows");
   }
   Matrix out(a.rows(), b.cols());
-  for (std::size_t i = 0; i < out.rows(); ++i) {
-    for (std::size_t k = 0; k < a.cols(); ++k) {
-      const float a_val = a.data()[i * a.cols() + k];
-      for (std::size_t j = 0; j < out.cols(); ++j) {
-        out.data()[i * out.cols() + j] += a_val * b.data()[k * b.cols() + j];
-      }
+  matmul(out, a, b);
+  return out;
+}
+
+// overwrite a pre-sized output separate from the input without allocation.
+inline void transpose(Matrix &out, const Matrix &in) {
+  const std::size_t rows = in.rows();
+  const std::size_t cols = in.cols();
+  detail::require_shape(out, cols, rows);
+  if (&out == &in) {
+    throw std::invalid_argument("Transpose output must be separate from its input");
+  }
+  if (rows == 0 || cols == 0) {
+    return;
+  }
+  float *const out_data = out.data();
+  const float *const in_data = in.data();
+  for (std::size_t col = 0; col < cols; ++col) {
+    for (std::size_t row = 0; row < rows; ++row) {
+      out_data[col * rows + row] = in_data[row * cols + col];
     }
   }
-  return out;
 }
 
 inline Matrix transpose(const Matrix &in) {
   Matrix out(in.cols(), in.rows());
-  for (std::size_t col = 0; col < in.cols(); ++col) {
-    for (std::size_t row = 0; row < in.rows(); ++row) {
-      out.data()[col * out.cols() + row] = in.data()[row * in.cols() + col];
-    }
-  }
+  transpose(out, in);
   return out;
 }
 

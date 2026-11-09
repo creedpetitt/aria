@@ -22,7 +22,7 @@ inline Matrix xavier_uniform(std::size_t input_count, std::size_t output_count,
   Matrix weights(input_count, output_count);
   for (std::size_t row = 0; row < input_count; ++row) {
     for (std::size_t col = 0; col < output_count; ++col) {
-      weights.access_elem(row, col) = distribution(generator);
+      weights[row, col] = distribution(generator);
     }
   }
   return weights;

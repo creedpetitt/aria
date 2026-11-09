@@ -27,13 +27,13 @@ inline TensorPtr combined_cross_entropy(const TensorPtr &logits,
     }
   }
 
-  const size_t rows = logits->data.rows();
-  const size_t cols = logits->data.cols();
+  const std::size_t rows = logits->data.rows();
+  const std::size_t cols = logits->data.cols();
 
   Matrix probabilities(rows, cols);
   float loss{};
 
-  for (size_t row{}; row < rows; row++) {
+  for (std::size_t row = 0; row < rows; ++row) {
     const auto stats = detail::softmax_row(probabilities, logits->data, row);
     const auto target = target_classes[row];
     loss += stats.log_exp_sum - (logits->data[row, target] - stats.maximum);
@@ -45,14 +45,20 @@ inline TensorPtr combined_cross_entropy(const TensorPtr &logits,
   Tensor *out_raw = out.get();
   out->backward_op = [logits, target_classes = std::move(target_classes),
                       probabilities = std::move(probabilities), out_raw] {
-    for (size_t row{}; row < logits->data.rows(); row++) {
-      for (std::size_t col = 0; col < probabilities.cols(); ++col) {
+    const std::size_t rows = probabilities.rows();
+    const std::size_t cols = probabilities.cols();
+    detail::require_shape(logits->data, rows, cols);
+    detail::require_shape(logits->grad, rows, cols);
+    detail::require_shape(out_raw->grad, 1, 1);
+    const float incoming = out_raw->grad[0, 0];
+    const float batch_rows = static_cast<float>(rows);
+    for (std::size_t row = 0; row < rows; ++row) {
+      for (std::size_t col = 0; col < cols; ++col) {
         float derivative = probabilities[row, col];
         if (col == target_classes[row]) {
           derivative -= 1.0f;
         }
-        logits->grad[row, col] += derivative * out_raw->grad[0, 0] /
-                                  static_cast<float>(probabilities.rows());
+        logits->grad[row, col] += derivative * incoming / batch_rows;
       }
     }
   };

@@ -80,8 +80,8 @@ inline TensorPtr matmul(const TensorPtr &a, const TensorPtr &b) {
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    a->grad = a->grad + matmul(out_raw->grad, transpose(b->data));
-    b->grad = b->grad + matmul(transpose(a->data), out_raw->grad);
+    a->grad += matmul(out_raw->grad, transpose(b->data));
+    b->grad += matmul(transpose(a->data), out_raw->grad);
   };
   return out;
 }
@@ -93,25 +93,24 @@ inline TensorPtr operator+(const TensorPtr &a, const TensorPtr &b) {
 
   out->backward_op = [a, b, out_raw] {
     const Matrix &g = out_raw->grad;
+    const auto shape = detail::broadcast_shape(a->data, b->data);
+    detail::require_shape(g, shape.rows, shape.cols);
+    detail::require_shape(a->grad, a->data.rows(), a->data.cols());
+    detail::require_shape(b->grad, b->data.rows(), b->data.cols());
+    if (shape.rows == 0 || shape.cols == 0) {
+      return;
+    }
 
-    for (size_t row{}; row < g.rows(); ++row) {
-      for (size_t col{}; col < g.cols(); ++col) {
-        auto a_row = row;
-        auto a_col = col;
-        auto b_row = row;
-        auto b_col = col;
-
-        if (a->data.rows() == 1)
-          a_row = 0;
-        if (a->data.cols() == 1)
-          a_col = 0;
-        if (b->data.rows() == 1)
-          b_row = 0;
-        if (b->data.cols() == 1)
-          b_col = 0;
-
-        a->grad[a_row, a_col] = a->grad[a_row, a_col] + g[row, col];
-        b->grad[b_row, b_col] = b->grad[b_row, b_col] + g[row, col];
+    // Sum broadcast contributions into each input's original row and column.
+    for (std::size_t row = 0; row < shape.rows; ++row) {
+      const std::size_t a_row = a->data.rows() == 1 ? 0 : row;
+      const std::size_t b_row = b->data.rows() == 1 ? 0 : row;
+      for (std::size_t col = 0; col < shape.cols; ++col) {
+        const std::size_t a_col = a->data.cols() == 1 ? 0 : col;
+        const std::size_t b_col = b->data.cols() == 1 ? 0 : col;
+        const float value = g[row, col];
+        a->grad[a_row, a_col] += value;
+        b->grad[b_row, b_col] += value;
       }
     }
   };
@@ -125,27 +124,33 @@ inline TensorPtr operator*(const TensorPtr &a, const TensorPtr &b) {
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    a->grad = a->grad + b->data * out_raw->grad;
-    b->grad = b->grad + a->data * out_raw->grad;
+    a->grad += b->data * out_raw->grad;
+    b->grad += a->data * out_raw->grad;
   };
   return out;
 }
 
 inline TensorPtr relu(const TensorPtr &a) {
-  Matrix out_data(a->data.rows(), a->data.cols());
-  for (std::size_t i{}; i < out_data.rows(); ++i) {
-    for (std::size_t j{}; j < out_data.cols(); ++j) {
-      out_data.access_elem(i, j) = std::max(0.0f, a->data.access_elem(i, j));
+  const std::size_t rows = a->data.rows();
+  const std::size_t cols = a->data.cols();
+  Matrix out_data(rows, cols);
+  for (std::size_t row = 0; row < rows; ++row) {
+    for (std::size_t col = 0; col < cols; ++col) {
+      out_data[row, col] = std::max(0.0f, a->data[row, col]);
     }
   }
 
   TensorPtr out = Tensor::create(std::move(out_data), {a}, "ReLU");
   Tensor *out_raw = out.get();
   out->backward_op = [a, out_raw] {
-    for (std::size_t i{}; i < a->data.rows(); ++i) {
-      for (std::size_t j{}; j < a->data.cols(); ++j) {
-        if (a->data.access_elem(i, j) > 0.0f) {
-          a->grad.access_elem(i, j) += out_raw->grad.access_elem(i, j);
+    const std::size_t rows = a->data.rows();
+    const std::size_t cols = a->data.cols();
+    detail::require_shape(a->grad, rows, cols);
+    detail::require_shape(out_raw->grad, rows, cols);
+    for (std::size_t row = 0; row < rows; ++row) {
+      for (std::size_t col = 0; col < cols; ++col) {
+        if (a->data[row, col] > 0.0f) {
+          a->grad[row, col] += out_raw->grad[row, col];
         }
       }
     }
