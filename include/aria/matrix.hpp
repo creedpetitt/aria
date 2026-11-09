@@ -329,7 +329,6 @@ inline Matrix &operator*=(Matrix &a, float scalar) {
   return a;
 }
 
-// Overwrites a pre-sized output separate from both inputs without allocation.
 inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
   if (a.cols() != b.rows()) {
     throw std::invalid_argument("Matrix A cols must equal Matrix B rows");
@@ -349,11 +348,22 @@ inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
   float *const out_data = out.data();
   const float *const a_data = a.data();
   const float *const b_data = b.data();
-  for (std::size_t i = 0; i < rows; ++i) {
-    for (std::size_t k = 0; k < inner; ++k) {
-      const float a_val = a_data[i * inner + k];
-      for (std::size_t j = 0; j < cols; ++j) {
-        out_data[i * cols + j] += a_val * b_data[k * cols + j];
+  // reuse sections of B across output rows
+  constexpr std::size_t block = 64;
+  for (std::size_t ii = 0; ii < rows; ii += block) {
+    for (std::size_t kk = 0; kk < inner; kk += block) {
+      for (std::size_t jj = 0; jj < cols; jj += block) {
+        const std::size_t i_end = std::min(ii + block, rows);
+        const std::size_t k_end = std::min(kk + block, inner);
+        const std::size_t j_end = std::min(jj + block, cols);
+        for (std::size_t i = ii; i < i_end; ++i) {
+          for (std::size_t k = kk; k < k_end; ++k) {
+            const float a_val = a_data[i * inner + k];
+            for (std::size_t j = jj; j < j_end; ++j) {
+              out_data[i * cols + j] += a_val * b_data[k * cols + j];
+            }
+          }
+        }
       }
     }
   }
