@@ -350,6 +350,9 @@ inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
   const float *const b_data = b.data();
   // reuse sections of B across output rows
   constexpr std::size_t block = 64;
+#ifdef ARIA_USE_OPENMP
+#pragma omp parallel for schedule(static) if(rows > block && inner >= block && cols >= block)
+#endif
   for (std::size_t ii = 0; ii < rows; ii += block) {
     for (std::size_t kk = 0; kk < inner; kk += block) {
       for (std::size_t jj = 0; jj < cols; jj += block) {

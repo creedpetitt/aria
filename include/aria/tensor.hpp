@@ -101,7 +101,7 @@ inline TensorPtr operator+(const TensorPtr &a, const TensorPtr &b) {
       return;
     }
 
-    // Sum broadcast contributions into each input's original row and column.
+    // sum broadcast contributions into each inputs original row and column
     for (std::size_t row = 0; row < shape.rows; ++row) {
       const std::size_t a_row = a->data.rows() == 1 ? 0 : row;
       const std::size_t b_row = b->data.rows() == 1 ? 0 : row;
