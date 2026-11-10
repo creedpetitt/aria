@@ -14,12 +14,47 @@ add_library(aria::aria ALIAS aria)
 target_include_directories(aria INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_features(aria INTERFACE cxx_std_23)
 
-add_executable(math main.cpp)
-target_link_libraries(math PRIVATE aria::aria)
+option(ARIA_BUILD_EXAMPLES "Build MNIST and enabled tabular examples" OFF)
+option(ARIA_BUILD_BENCHMARKS "Build matrix benchmarks" OFF)
+option(ARIA_BUILD_WASM "Build JavaScript/WebAssembly bindings" OFF)
+option(ARIA_WASM_SIMD "Enable 128-bit SIMD in WebAssembly bindings" ON)
+option(ARIA_ENABLE_OPENMP "Parallelize native matrix multiplication with OpenMP" OFF)
+option(BUILD_TESTING "Build tests" OFF)
+
+if(ARIA_ENABLE_OPENMP)
+  if(EMSCRIPTEN)
+    message(FATAL_ERROR "ARIA_ENABLE_OPENMP is native-only; disable it for Emscripten")
+  endif()
+  find_package(OpenMP REQUIRED COMPONENTS CXX)
+  target_link_libraries(aria INTERFACE OpenMP::OpenMP_CXX)
+  target_compile_definitions(aria INTERFACE ARIA_USE_OPENMP=1)
+endif()
+
+if(ARIA_BUILD_WASM)
+  include(cmake/AriaWasm.cmake)
+endif()
+
+if(ARIA_BUILD_EXAMPLES)
+  add_executable(math main.cpp)
+  target_link_libraries(math PRIVATE aria::aria)
+endif()
 
 include(CTest)
 if(ARIA_BUILD_IO)
   include(cmake/AriaIO.cmake)
+  if(ARIA_BUILD_EXAMPLES AND ARIA_IO_CSV)
+    foreach(dataset IN ITEMS housing titanic)
+      add_executable(${dataset}_example examples/${dataset}.cpp)
+      target_link_libraries(${dataset}_example PRIVATE aria::io)
+      if(BUILD_TESTING AND
+         EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/tabular/${dataset}/train.csv" AND
+         EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/tabular/${dataset}/test.csv")
+        add_test(NAME ${dataset}_training COMMAND ${dataset}_example
+                 "${CMAKE_CURRENT_SOURCE_DIR}/data/tabular/${dataset}")
+        set_tests_properties(${dataset}_training PROPERTIES TIMEOUT 120)
+      endif()
+    endforeach()
+  endif()
 endif()
 
 if(BUILD_TESTING)
@@ -36,7 +71,8 @@ if(BUILD_TESTING)
   target_include_directories(mnist_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME mnist_loader_tests COMMAND mnist_tests)
 
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/mnist/train-images-idx3-ubyte" AND
+  if(ARIA_BUILD_EXAMPLES AND
+     EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/mnist/train-images-idx3-ubyte" AND
      EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/mnist/train-labels-idx1-ubyte" AND
      EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/mnist/t10k-images-idx3-ubyte" AND
      EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/data/mnist/t10k-labels-idx1-ubyte")
@@ -45,5 +81,7 @@ if(BUILD_TESTING)
   endif()
 endif()
 
-add_executable(matrix_bench benchmarks/matrix_bench.cpp)
-target_link_libraries(matrix_bench PRIVATE aria::aria)
+if(ARIA_BUILD_BENCHMARKS)
+  add_executable(matrix_bench benchmarks/matrix_bench.cpp)
+  target_link_libraries(matrix_bench PRIVATE aria::aria)
+endif()

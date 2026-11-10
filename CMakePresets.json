@@ -9,6 +9,11 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "BUILD_TESTING": "ON",
+        "ARIA_BUILD_EXAMPLES": "ON",
+        "ARIA_BUILD_BENCHMARKS": "ON",
+        "ARIA_BUILD_WASM": "ON",
+        "ARIA_WASM_SIMD": "ON",
+        "ARIA_ENABLE_OPENMP": "ON",
         "ARIA_BUILD_IO": "OFF"
       }
     },

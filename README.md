@@ -87,7 +87,9 @@ cmake --build --preset release
 ctest --preset release
 ```
 
-These development presets enable tests, examples, benchmarks, and Wasm bindings.
+These development presets enable tests, examples, benchmarks, Wasm bindings,
+and native OpenMP matmul. The native compiler must support OpenMP; use
+`-DARIA_ENABLE_OPENMP=OFF` when configuring to disable it.
 The same build updates the Wasm output in `build/release/wasm/` automatically.
 Plain CMake configuration leaves these options off. Use `debug` instead of
 `release` for a debug build. For native-only development, configure with
@@ -95,10 +97,12 @@ Plain CMake configuration leaves these options off. Use `debug` instead of
 
 ## WebAssembly
 
-An optional Emscripten build exposes Matrix construction, element access, and
-matrix multiplication to JavaScript and TypeScript. It generates an ES module,
+An optional Emscripten build exposes Matrix math, bulk typed arrays, Tensor
+autograd, models, losses, and SGD to JavaScript and TypeScript. It generates an ES module,
 a `.wasm` binary, and TypeScript declarations. See [the Wasm guide](docs/wasm.md)
-for build commands, usage, and ownership. Training bindings are not exposed yet.
+for build commands, usage, ownership, and the browser SIMD benchmark. Wasm SIMD
+is enabled by default; use `-DARIA_WASM_SIMD=OFF` for a scalar build.
+See [the JavaScript API and training example](docs/wasm-api.md) for usage.
 
 ## Optional I/O
 
