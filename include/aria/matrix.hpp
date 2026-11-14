@@ -80,7 +80,6 @@ public:
     data_.swap(other.data_);
   }
 
-  // Checked access for individual elements; numerical loops use data().
   float &operator[](std::size_t row, std::size_t col) {
     if (row >= rows_ || col >= cols_) {
       throw std::out_of_range("Matrix row or column out of range");
@@ -99,7 +98,7 @@ public:
 
   std::size_t rows() const noexcept { return rows_; }
   std::size_t cols() const noexcept { return cols_; }
-  // Unchecked contiguous storage for numerical loops with validated shapes.
+
   float *data() noexcept { return data_.data(); }
   const float *data() const noexcept { return data_.data(); }
 
@@ -202,7 +201,6 @@ struct SoftmaxRowStats {
   float log_exp_sum;
 };
 
-// Callers validate matching shapes, nonempty columns, and the row range.
 inline SoftmaxRowStats softmax_row(Matrix &out, const Matrix &in,
                                   std::size_t row) {
   const std::size_t cols = in.cols();
@@ -229,7 +227,6 @@ inline SoftmaxRowStats softmax_row(Matrix &out, const Matrix &in,
 
 } // namespace detail
 
-// Overwrites a pre-sized output; the input and output may be the same matrix.
 inline void softmax(Matrix &out, const Matrix &in) {
   const std::size_t rows = in.rows();
   const std::size_t cols = in.cols();
@@ -248,8 +245,6 @@ inline Matrix softmax(const Matrix &in) {
   return out;
 }
 
-// Pre-sized outputs are overwritten without allocation. The output may be an
-// input when that input already has the complete result shape.
 inline void add(Matrix &out, const Matrix &a, const Matrix &b) {
   detail::broadcast_elementwise(out, a, b,
                                 [](float x, float y) { return x + y; });
@@ -381,7 +376,6 @@ inline Matrix matmul(const Matrix &a, const Matrix &b) {
   return out;
 }
 
-// overwrite a pre-sized output separate from the input without allocation.
 inline void transpose(Matrix &out, const Matrix &in) {
   const std::size_t rows = in.rows();
   const std::size_t cols = in.cols();

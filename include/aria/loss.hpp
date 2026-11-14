@@ -29,7 +29,7 @@ inline TensorPtr mean_squared_error(const TensorPtr &prediction,
 
   const float count = static_cast<float>(error.rows() * error.cols());
   auto out = Tensor::create(Matrix(1, 1, total / count),
-                            {prediction}, "mse");
+                            {prediction}, AutogradOp::MSE);
   Tensor *out_raw = out.get();
 
   out->backward_op =
@@ -76,7 +76,7 @@ inline TensorPtr combined_cross_entropy(const TensorPtr &logits,
 
   loss = loss / static_cast<float>(rows);
 
-  auto out = Tensor::create(Matrix(1, 1, loss), {logits}, "cross_entropy");
+  auto out = Tensor::create(Matrix(1, 1, loss), {logits}, AutogradOp::CrossEntropy);
   Tensor *out_raw = out.get();
   out->backward_op = [logits, target_classes = std::move(target_classes),
                       probabilities = std::move(probabilities), out_raw] {

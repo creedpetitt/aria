@@ -1,12 +1,12 @@
 #pragma once
 
+#include <aria/autograd_ops.hpp>
 #include <aria/matrix.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <functional>
 #include <memory>
-#include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -20,16 +20,16 @@ class Tensor : public std::enable_shared_from_this<Tensor> {
 public:
   Matrix data;
   Matrix grad;
-  std::string op;
+  AutogradOp op;
   std::vector<TensorPtr> prev;
   std::function<void()> backward_op;
 
-  Tensor(aria::Matrix values, const std::string &operation = "")
+  Tensor(aria::Matrix values, AutogradOp operation = AutogradOp::None)
       : data(std::move(values)), grad(data.rows(), data.cols(), 0.0f),
         op(operation), backward_op([] {}) {}
 
   Tensor(aria::Matrix values, std::vector<TensorPtr> children,
-         const std::string &operation = "")
+         AutogradOp operation = AutogradOp::None)
       : data(std::move(values)), grad(data.rows(), data.cols(), 0.0f),
         op(operation), prev(std::move(children)), backward_op([] {}) {}
 
@@ -41,12 +41,12 @@ public:
   ~Tensor() = default;
 
   static TensorPtr create(aria::Matrix values,
-                          const std::string &operation = "") {
+                          const AutogradOp &operation = AutogradOp::None) {
     return std::make_shared<Tensor>(std::move(values), operation);
   }
 
   static TensorPtr create(aria::Matrix values, std::vector<TensorPtr> children,
-                          const std::string &operation = "") {
+                          const AutogradOp &operation) {
     return std::make_shared<Tensor>(std::move(values), std::move(children),
                                     operation);
   }
@@ -76,43 +76,24 @@ public:
 };
 
 inline TensorPtr matmul(const TensorPtr &a, const TensorPtr &b) {
-  TensorPtr out = Tensor::create(matmul(a->data, b->data), {a, b}, "matmul");
+  Matrix out_data = matmul(a->data, b->data);
+  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, AutogradOp::Matmul);
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    a->grad += matmul(out_raw->grad, transpose(b->data));
-    b->grad += matmul(transpose(a->data), out_raw->grad);
+    autograd::matmul_backward(a->grad, b->grad, a->data, b->data,
+                              out_raw->grad);
   };
   return out;
 }
 
 inline TensorPtr operator+(const TensorPtr &a, const TensorPtr &b) {
   Matrix out_data = a->data + b->data;
-  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, "+");
+  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, AutogradOp::Add);
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    const Matrix &g = out_raw->grad;
-    const auto shape = detail::broadcast_shape(a->data, b->data);
-    detail::require_shape(g, shape.rows, shape.cols);
-    detail::require_shape(a->grad, a->data.rows(), a->data.cols());
-    detail::require_shape(b->grad, b->data.rows(), b->data.cols());
-    if (shape.rows == 0 || shape.cols == 0) {
-      return;
-    }
-
-    // sum broadcast contributions into each inputs original row and column
-    for (std::size_t row = 0; row < shape.rows; ++row) {
-      const std::size_t a_row = a->data.rows() == 1 ? 0 : row;
-      const std::size_t b_row = b->data.rows() == 1 ? 0 : row;
-      for (std::size_t col = 0; col < shape.cols; ++col) {
-        const std::size_t a_col = a->data.cols() == 1 ? 0 : col;
-        const std::size_t b_col = b->data.cols() == 1 ? 0 : col;
-        const float value = g[row, col];
-        a->grad[a_row, a_col] += value;
-        b->grad[b_row, b_col] += value;
-      }
-    }
+    autograd::add_backward(a->grad, b->grad, a->data, b->data, out_raw->grad);
   };
   return out;
 }
@@ -120,12 +101,47 @@ inline TensorPtr operator+(const TensorPtr &a, const TensorPtr &b) {
 // elemwise multiplication, not matmul
 inline TensorPtr operator*(const TensorPtr &a, const TensorPtr &b) {
   Matrix out_data = a->data * b->data;
-  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, "*");
+  TensorPtr out = Tensor::create(std::move(out_data), {a, b}, AutogradOp::Multiply);
   Tensor *out_raw = out.get();
 
   out->backward_op = [a, b, out_raw] {
-    a->grad += b->data * out_raw->grad;
-    b->grad += a->data * out_raw->grad;
+    autograd::multiply_backward(a->grad, b->grad, a->data, b->data,
+                                out_raw->grad);
+  };
+  return out;
+}
+
+// scalar multiplication
+inline TensorPtr operator*(const TensorPtr &a, const float scalar) {
+  Matrix out_data = a->data * scalar;
+  TensorPtr out = Tensor::create(std::move(out_data), {a}, AutogradOp::Scale);
+  Tensor *out_raw = out.get();
+
+  out->backward_op = [a, scalar, out_raw] {
+    autograd::scale_backward(a->grad, out_raw->grad, scalar);
+  };
+  return out;
+}
+
+inline TensorPtr transpose(const TensorPtr &a) {
+  Matrix out_data = transpose(a->data);
+  TensorPtr out = Tensor::create(std::move(out_data), {a}, AutogradOp::Transpose);
+  Tensor *out_raw = out.get();
+
+  out->backward_op = [a, out_raw] {
+    autograd::transpose_backward(a->grad, out_raw->grad);
+  };
+
+  return out;
+}
+
+inline TensorPtr softmax(const TensorPtr &a) {
+  Matrix out_data = softmax(a->data);
+  TensorPtr out = Tensor::create(std::move(out_data), {a}, AutogradOp::Softmax);
+  Tensor *out_raw = out.get();
+
+  out->backward_op = [a, out_raw] {
+    autograd::softmax_backward(a->grad, out_raw->data, out_raw->grad);
   };
   return out;
 }
@@ -140,20 +156,10 @@ inline TensorPtr relu(const TensorPtr &a) {
     }
   }
 
-  TensorPtr out = Tensor::create(std::move(out_data), {a}, "ReLU");
+  TensorPtr out = Tensor::create(std::move(out_data), {a}, AutogradOp::ReLU);
   Tensor *out_raw = out.get();
   out->backward_op = [a, out_raw] {
-    const std::size_t rows = a->data.rows();
-    const std::size_t cols = a->data.cols();
-    detail::require_shape(a->grad, rows, cols);
-    detail::require_shape(out_raw->grad, rows, cols);
-    for (std::size_t row = 0; row < rows; ++row) {
-      for (std::size_t col = 0; col < cols; ++col) {
-        if (a->data[row, col] > 0.0f) {
-          a->grad[row, col] += out_raw->grad[row, col];
-        }
-      }
-    }
+    autograd::relu_backward(a->grad, a->data, out_raw->grad);
   };
   return out;
 }
