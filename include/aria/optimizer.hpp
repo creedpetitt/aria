@@ -1,27 +1,24 @@
 #pragma once
 
 #include <aria/tensor.hpp>
+#include <aria/validate.hpp>
 
-#include <cmath>
-#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace aria {
 
-// plain gradient descent optimizer
 class Optimizer {
 public:
+  virtual ~Optimizer() = default;
+
   Optimizer(std::vector<TensorPtr> parameters, float learning_rate)
       : parameters_(std::move(parameters)), learning_rate_(learning_rate) {
-    if (!std::isfinite(learning_rate_) || learning_rate_ <= 0.0f) {
-      throw std::invalid_argument("Learning rate must be positive and finite");
-    }
+    validate::require_positive_finite(
+      learning_rate_, "Learning rate must be positive and finite");
     for (const auto &parameter : parameters_) {
-      if (!parameter) {
-        throw std::invalid_argument("Optimizer parameters must not be null");
-      }
+      validate::require_nonnull(parameter, "Optimizer parameters must not be null");
     }
 
     std::unordered_set<Tensor *> seen;
@@ -31,19 +28,19 @@ public:
     });
   }
 
-  void zero_grad() {
+  virtual void zero_grad() {
     for (const auto &parameter : parameters_) {
       parameter->grad.fill(0.0f);
     }
   }
 
-  void step() {
+  virtual void step() {
     for (const auto &parameter : parameters_) {
       parameter->data += parameter->grad * (-learning_rate_);
     }
   }
 
-private:
+protected:
   std::vector<TensorPtr> parameters_;
   float learning_rate_;
 };

@@ -2,6 +2,7 @@
 
 #include <aria/matrix.hpp>
 #include <aria/random.hpp>
+#include <aria/validate.hpp>
 
 #include <cmath>
 #include <cstddef>
@@ -12,9 +13,8 @@ namespace aria::init {
 
 inline Matrix xavier_uniform(std::size_t input_count, std::size_t output_count,
                              std::mt19937 &generator = aria::detail::default_generator()) {
-  if (input_count == 0 || output_count == 0) {
-    throw std::invalid_argument("Initialization dimensions must be positive");
-  }
+  validate::require_positive_dimensions(input_count, output_count,
+                                        "Initialization dimensions must be positive");
 
   const float limit = std::sqrt(6.0f / (static_cast<float>(input_count) +
                                         static_cast<float>(output_count)));
