@@ -1,12 +1,18 @@
 #pragma once
 
+#include <aria/validate.hpp>
+
+#ifdef ARIA_USE_MKL
+#include <aria/backend.hpp>
+#endif
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <initializer_list>
 #include <limits>
 #include <ostream>
-#include <stdexcept>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -17,14 +23,12 @@ public:
   Matrix() = default;
 
   Matrix(std::size_t rows, std::size_t cols, float data = 0.0f)
-      : rows_(rows), cols_(cols), data_(element_count(rows, cols), data) {}
+      : rows_(rows), cols_(cols), data_(validate::element_count(rows, cols), data) {}
 
   static Matrix from_buffer(std::size_t rows, std::size_t cols,
                             std::vector<float> values) {
-    if (values.size() != element_count(rows, cols)) {
-      throw std::invalid_argument(
-          "Matrix buffer size must match its dimensions");
-    }
+    validate::require_equal(values.size(), validate::element_count(rows, cols),
+                            "Matrix buffer size must match its dimensions");
     Matrix result;
     result.rows_ = rows;
     result.cols_ = cols;
@@ -35,12 +39,10 @@ public:
   Matrix(std::initializer_list<std::initializer_list<float>> rows)
       : rows_(rows.size()), cols_(rows.size() == 0 ? 0 : rows.begin()->size()) {
     for (const auto &row : rows) {
-      if (row.size() != cols_) {
-        throw std::invalid_argument("Matrix rows must have equal lengths");
-      }
+      validate::require_equal(row.size(), cols_, "Matrix rows must have equal lengths");
     }
 
-    data_.reserve(element_count(rows_, cols_));
+    data_.reserve(validate::element_count(rows_, cols_));
     for (const auto &row : rows) {
       data_.insert(data_.end(), row.begin(), row.end());
     }
@@ -60,7 +62,8 @@ public:
 
   Matrix(Matrix &&other) noexcept
       : rows_(std::exchange(other.rows_, 0)),
-        cols_(std::exchange(other.cols_, 0)), data_(std::move(other.data_)) {
+        cols_(std::exchange(other.cols_, 0)), 
+        data_(std::move(other.data_)) {
     other.data_.clear();
   }
 
@@ -81,16 +84,12 @@ public:
   }
 
   float &operator[](std::size_t row, std::size_t col) {
-    if (row >= rows_ || col >= cols_) {
-      throw std::out_of_range("Matrix row or column out of range");
-    }
+    validate::require_bounds(row, col, rows_, cols_);
     return data_[row * cols_ + col];
   }
 
   const float &operator[](std::size_t row, std::size_t col) const {
-    if (row >= rows_ || col >= cols_) {
-      throw std::out_of_range("Matrix row or column out of range");
-    }
+    validate::require_bounds(row, col, rows_, cols_);
     return data_[row * cols_ + col];
   }
 
@@ -123,13 +122,6 @@ public:
   }
 
 private:
-  static std::size_t element_count(std::size_t rows, std::size_t cols) {
-    if (cols != 0 && rows > std::numeric_limits<std::size_t>::max() / cols) {
-      throw std::length_error("Matrix dimensions overflow the element count");
-    }
-    return rows * cols;
-  }
-
   std::size_t rows_{};
   std::size_t cols_{};
   std::vector<float> data_;
@@ -137,34 +129,11 @@ private:
 
 namespace detail {
 
-struct MatrixShape {
-  std::size_t rows;
-  std::size_t cols;
-};
-
-inline MatrixShape broadcast_shape(const Matrix &a, const Matrix &b) {
-  const bool rows_ok = a.rows() == b.rows() || a.rows() == 1 || b.rows() == 1;
-  const bool cols_ok = a.cols() == b.cols() || a.cols() == 1 || b.cols() == 1;
-  if (!rows_ok || !cols_ok) {
-    throw std::invalid_argument("Incompatible matrix shapes for broadcasting");
-  }
-  return {a.rows() == 1 ? b.rows() : a.rows(),
-          a.cols() == 1 ? b.cols() : a.cols()};
-}
-
-inline void require_shape(const Matrix &value, std::size_t rows,
-                          std::size_t cols) {
-  if (value.rows() != rows || value.cols() != cols) {
-    throw std::invalid_argument(
-        "Matrix shape must match the required dimensions");
-  }
-}
-
 template <typename Operation>
 inline void broadcast_elementwise(Matrix &out, const Matrix &a, const Matrix &b,
                                   Operation operation) {
-  const auto shape = broadcast_shape(a, b);
-  require_shape(out, shape.rows, shape.cols);
+  const auto shape = validate::broadcast_shape(a, b);
+  validate::require_shape(out, shape.rows, shape.cols);
   if (shape.rows == 0 || shape.cols == 0) {
     return;
   }
@@ -230,7 +199,7 @@ inline SoftmaxRowStats softmax_row(Matrix &out, const Matrix &in,
 inline void softmax(Matrix &out, const Matrix &in) {
   const std::size_t rows = in.rows();
   const std::size_t cols = in.cols();
-  detail::require_shape(out, rows, cols);
+  validate::require_shape(out, rows, cols);
   if (cols == 0) {
     return;
   }
@@ -256,8 +225,8 @@ inline void subtract(Matrix &out, const Matrix &a, const Matrix &b) {
 }
 
 inline void multiply(Matrix &out, const Matrix &a, const Matrix &b) {
-  detail::require_shape(b, a.rows(), a.cols());
-  detail::require_shape(out, a.rows(), a.cols());
+  validate::require_shape(b, a.rows(), a.cols());
+  validate::require_shape(out, a.rows(), a.cols());
   float *const out_data = out.data();
   const float *const a_data = a.data();
   const float *const b_data = b.data();
@@ -268,7 +237,7 @@ inline void multiply(Matrix &out, const Matrix &a, const Matrix &b) {
 }
 
 inline void scale(Matrix &out, const Matrix &a, float scalar) {
-  detail::require_shape(out, a.rows(), a.cols());
+  validate::require_shape(out, a.rows(), a.cols());
   float *const out_data = out.data();
   const float *const a_data = a.data();
   const std::size_t count = a.rows() * a.cols();
@@ -277,8 +246,22 @@ inline void scale(Matrix &out, const Matrix &a, float scalar) {
   }
 }
 
+inline void causal_mask(Matrix &out, const Matrix &in) {
+  validate::require_square(in, "Causal mask requires a square score matrix");
+  validate::require_shape(out, in.rows(), in.cols(),
+                          "Causal mask output must match the input shape");
+
+  const float blocked = -(std::numeric_limits<float>::infinity());
+
+  for (std::size_t row = 0; row < in.rows(); ++row) {
+    for (std::size_t col = 0; col < in.cols(); ++col) {
+      out[row, col] = col <= row ? in[row, col] : blocked;
+    }
+  }
+}
+
 inline Matrix operator*(const Matrix &a, const Matrix &b) {
-  detail::require_shape(b, a.rows(), a.cols());
+  validate::require_shape(b, a.rows(), a.cols());
   Matrix out(a.rows(), a.cols());
   multiply(out, a, b);
   return out;
@@ -291,14 +274,14 @@ inline Matrix operator*(const Matrix &a, float scalar) {
 }
 
 inline Matrix operator+(const Matrix &a, const Matrix &b) {
-  const auto shape = detail::broadcast_shape(a, b);
+  const auto shape = validate::broadcast_shape(a, b);
   Matrix out(shape.rows, shape.cols);
   add(out, a, b);
   return out;
 }
 
 inline Matrix operator-(const Matrix &a, const Matrix &b) {
-  const auto shape = detail::broadcast_shape(a, b);
+  const auto shape = validate::broadcast_shape(a, b);
   Matrix out(shape.rows, shape.cols);
   subtract(out, a, b);
   return out;
@@ -325,16 +308,16 @@ inline Matrix &operator*=(Matrix &a, float scalar) {
 }
 
 inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
-  if (a.cols() != b.rows()) {
-    throw std::invalid_argument("Matrix A cols must equal Matrix B rows");
-  }
+#ifdef ARIA_USE_MKL
+  backend::gemm(out, a, b);
+#else
+  validate::require_matmul(a, b);
   const std::size_t rows = a.rows();
   const std::size_t inner = a.cols();
   const std::size_t cols = b.cols();
-  detail::require_shape(out, rows, cols);
-  if (&out == &a || &out == &b) {
-    throw std::invalid_argument("Matmul output must be separate from its inputs");
-  }
+  validate::require_shape(out, rows, cols);
+  validate::require_separate(out, a, "Matmul output must be separate from its inputs");
+  validate::require_separate(out, b, "Matmul output must be separate from its inputs");
   out.fill(0.0f);
   if (rows == 0 || cols == 0 || inner == 0) {
     return;
@@ -365,12 +348,11 @@ inline void matmul(Matrix &out, const Matrix &a, const Matrix &b) {
       }
     }
   }
+#endif
 }
 
 inline Matrix matmul(const Matrix &a, const Matrix &b) {
-  if (a.cols() != b.rows()) {
-    throw std::invalid_argument("Matrix A cols must equal Matrix B rows");
-  }
+  validate::require_matmul(a, b);
   Matrix out(a.rows(), b.cols());
   matmul(out, a, b);
   return out;
@@ -379,10 +361,8 @@ inline Matrix matmul(const Matrix &a, const Matrix &b) {
 inline void transpose(Matrix &out, const Matrix &in) {
   const std::size_t rows = in.rows();
   const std::size_t cols = in.cols();
-  detail::require_shape(out, cols, rows);
-  if (&out == &in) {
-    throw std::invalid_argument("Transpose output must be separate from its input");
-  }
+  validate::require_shape(out, cols, rows);
+  validate::require_separate(out, in, "Transpose output must be separate from its input");
   if (rows == 0 || cols == 0) {
     return;
   }
@@ -398,6 +378,47 @@ inline void transpose(Matrix &out, const Matrix &in) {
 inline Matrix transpose(const Matrix &in) {
   Matrix out(in.cols(), in.rows());
   transpose(out, in);
+  return out;
+}
+
+inline void concat_columns(Matrix &out, std::span<const Matrix *const> inputs) {
+  const auto shape = validate::concat_columns_shape(inputs);
+  validate::require_shape(out, shape.rows, shape.cols);
+  for (const auto *input : inputs) {
+    validate::require_separate(out, *input,
+                               "Column concatenation output must be separate from its inputs");
+  }
+  if (shape.rows == 0 || shape.cols == 0) {
+    return;
+  }
+
+  float *const destination = out.data();
+  std::size_t offset = 0;
+  for (const auto *input : inputs) {
+    const std::size_t width = input->cols();
+    if (width != 0) {
+      const float *const source = input->data();
+      for (std::size_t row = 0; row < shape.rows; ++row) {
+        std::copy_n(source + row * width, width,
+                    destination + row * shape.cols + offset);
+      }
+    }
+    offset += width;
+  }
+}
+
+inline Matrix concat_columns(std::span<const Matrix *const> inputs) {
+  const auto shape = validate::concat_columns_shape(inputs);
+  Matrix out(shape.rows, shape.cols);
+  concat_columns(out, inputs);
+  return out;
+}
+
+inline Matrix causal_mask(const Matrix &in) {
+  validate::require_square(in, "Causal mask requires a square score matrix");
+
+  Matrix out(in.rows(), in.cols());
+  causal_mask(out, in);
   return out;
 }
 

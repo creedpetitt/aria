@@ -146,6 +146,43 @@ inline TensorPtr softmax(const TensorPtr &a) {
   return out;
 }
 
+inline TensorPtr causal_mask(const TensorPtr &scores) {
+  Matrix out_data = causal_mask(scores->data);
+  TensorPtr out = Tensor::create(std::move(out_data), {scores}, AutogradOp::CausalMask);
+  Tensor *out_raw = out.get();
+
+  out->backward_op = [scores, out_raw] {
+    autograd::causal_mask_backward(scores->grad, out_raw->grad);
+  };
+  return out;
+}
+
+inline TensorPtr concat_columns(std::vector<TensorPtr> inputs) {
+  std::vector<const Matrix *> values;
+  std::vector<Matrix *> gradients;
+  std::vector<std::size_t> widths;
+  values.reserve(inputs.size());
+  gradients.reserve(inputs.size());
+  widths.reserve(inputs.size());
+  for (const auto &input : inputs) {
+    validate::require_nonnull(input, "Column concatenation inputs must not be null");
+    values.push_back(&input->data);
+    gradients.push_back(&input->grad);
+    widths.push_back(input->data.cols());
+  }
+
+  Matrix out_data = concat_columns(std::span<const Matrix *const>(values));
+  TensorPtr out = Tensor::create(std::move(out_data), std::move(inputs),
+                                 AutogradOp::ConcatColumns);
+  Tensor *out_raw = out.get();
+  // prev owns the nodes containing these gradient matrices for the graph's lifetime.
+  out->backward_op = [gradients = std::move(gradients),
+                      widths = std::move(widths), out_raw] {
+    autograd::concat_columns_backward(gradients, widths, out_raw->grad);
+  };
+  return out;
+}
+
 inline TensorPtr relu(const TensorPtr &a) {
   const std::size_t rows = a->data.rows();
   const std::size_t cols = a->data.cols();
